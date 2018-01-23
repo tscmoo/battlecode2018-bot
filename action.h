@@ -860,14 +860,14 @@ void actions() {
 				for_each_range_index(u->pos, u->index, 3, [&](size_t index) {
 					int x = index % 50;
 					int y = index / 50;
-					tile& t = u->p->get_tile(xy(x, y));
-					if (t.u && t.u->is_mine && t.u->type == worker && u->pos != t.u->pos) {
-						score += 100 / lengthsq(u->pos - t.u->pos);
+					tile& nt = u->p->get_tile(xy(x, y));
+					if (nt.u && nt.u->is_mine && nt.u->type == worker) {
+						score += 10000 / lengthsq(t.pos - nt.pos);
 					}
-					if (t.u && t.u->is_building) score -= 1000;
+					if (nt.u && nt.u->is_building) score -= 1000;
 					return true;
 				});
-				if (u->ability_heat < 10) score += 100;
+				if (u->ability_heat < 10) score += 10000;
 				score += std::max(200 - damage_grid[index], 0);
 				if (score > best_factory_score) {
 					best_factory_score = score;
@@ -879,7 +879,7 @@ void actions() {
 		}
 	}
 
-	bool want_factories = ((go_for_knights ? workers >= 8 || current_frame >= 6 : workers >= 20 || current_frame >= 20) || (current_frame >= 1 && karbonite > 100));
+	bool want_factories = ((go_for_knights ? workers >= 8 || current_frame >= 6 : workers >= 20 || current_frame >= 20) || (current_frame >= 3 && karbonite > 100));
 	bool save_for_factory = factories == 0 && want_factories && current_planet == earth && karbonite < 250;
 
 	if (best_factory_tile && want_factories) {
@@ -958,6 +958,16 @@ void actions() {
 						if (builders < incomplete_factories * 3) need_more_builders = true;
 						if (karbonite >= 300) need_more_builders = true;
 					}
+					if (!need_more_builders) {
+						u->p->for_each_neighbor_tile(u->pos, [&](tile& t) {
+							if (!t.walkable || t.u) return true;
+							if (lengthsq(t.pos - build_unit->pos) <= 2) {
+								need_more_builders = true;
+								return false;
+							}
+							return true;
+						});
+					}
 				}
 				if (need_more_builders && u->ability_heat < 10 && factories && karbonite >= 30) {
 					tile* best_tile = nullptr;
@@ -965,7 +975,7 @@ void actions() {
 					u->p->for_each_neighbor_tile(u->pos, [&](tile& t) {
 						if (t.pos == u->pos) return true;
 						if (t.walkable && !t.u) {
-							int s = isqrt((unsigned)default_attack_distgrid[distgrid_index(t.pos)] * 4) + isqrt((unsigned)lengthsq(t.pos - build_unit->pos) * 4);
+							int s = isqrt((unsigned)default_attack_distgrid[distgrid_index(t.pos)] * 4) - isqrt((unsigned)lengthsq(t.pos - build_unit->pos) * 4);
 							if (s > best_score) {
 								best_score = s;
 								best_tile = &t;
@@ -1058,7 +1068,7 @@ void actions() {
 				t.karbonite -= 3;
 				if (t.karbonite <= 0) t.karbonite = 0;
 				u->p->for_each_neighbor_tile(u->pos, [&](tile& t) {
-					if (t.karbonite >= 3) u->controller->harvest_nomove_frame = current_frame;
+					if (t.karbonite >= 3 && default_build_distgrid[u->index] > 3) u->controller->harvest_nomove_frame = current_frame;
 					if (u->movement_heat < 10) {
 						if (t.u && t.u->is_mine && t.u->type == worker) {
 							xy r = t.pos - u->pos;
@@ -1094,52 +1104,53 @@ void actions() {
 	bool mars_spam = current_planet == mars && (current_frame >= 700 || karbonite > 100);
 
 	if ((current_planet == earth || current_frame < 680 || mars_spam) && !save_for_factory) {
-		if (factories >= 3 || workers < 30 || mars_spam) {
+		if (factories >= 3 || workers < 15 || mars_spam) {
 			if (replicate_to_the_far_reaches_of_the_world(mars_spam)) return actions();
-		}
-		int best_replicate_score = std::numeric_limits<int>::max();
-		tile* best_replicate_tile = nullptr;
-		unit* best_replicate_unit = nullptr;
-		for (unit* u : my_workers) {
-			if (!u->is_on_map) continue;
-			//if (u->controller->last_action_frame == current_frame) continue;
 
-			//if (total_karbonite >= workers * 42 && karbonite >= 30 && u->ability_heat < 10 && factories) {
-			if (karbonite >= 30 && u->ability_heat < 10 && (factories >= 3 || workers < 30 || mars_spam)) {
-				int ud = default_gather_distgrid[u->index];
-				u->p->for_each_neighbor_tile(u->pos, [&](tile& t) {
-					if (t.pos == u->pos) return true;
-					if (!t.walkable || t.u || !t.visible) return true;
-					size_t index = distgrid_index(t.pos);
-					int d = default_gather_distgrid[index];
-					if (d && d >= ud && !mars_spam) return true;
-					//int score = (d + 1) * 1000 - wall_distgrid[index];
-					int score = get_replicate_score(t.pos, mars_spam);
-					log("replicate score: %d\n", score);
-					if (score < best_replicate_score) {
-						best_replicate_score = score;
-						best_replicate_tile = &t;
-						best_replicate_unit = u;
-					}
-					return true;
-				});
+			int best_replicate_score = std::numeric_limits<int>::max();
+			tile* best_replicate_tile = nullptr;
+			unit* best_replicate_unit = nullptr;
+			for (unit* u : my_workers) {
+				if (!u->is_on_map) continue;
+				//if (u->controller->last_action_frame == current_frame) continue;
+
+				//if (total_karbonite >= workers * 42 && karbonite >= 30 && u->ability_heat < 10 && factories) {
+				if (karbonite >= 30 && u->ability_heat < 10 && (factories >= 3 || workers < 30 || mars_spam)) {
+					int ud = default_gather_distgrid[u->index];
+					u->p->for_each_neighbor_tile(u->pos, [&](tile& t) {
+						if (t.pos == u->pos) return true;
+						if (!t.walkable || t.u || !t.visible) return true;
+						size_t index = distgrid_index(t.pos);
+						int d = default_gather_distgrid[index];
+						if (d && d >= ud && !mars_spam) return true;
+						//int score = (d + 1) * 1000 - wall_distgrid[index];
+						int score = get_replicate_score(t.pos, mars_spam);
+						log("replicate score: %d\n", score);
+						if (score < best_replicate_score) {
+							best_replicate_score = score;
+							best_replicate_tile = &t;
+							best_replicate_unit = u;
+						}
+						return true;
+					});
+				}
 			}
-		}
-		if (best_replicate_tile) {
-			unit* u = best_replicate_unit;
-			tile& t = *best_replicate_tile;
-			bc_GameController_replicate(gc, u->id, bc_Direction_from_relpos(t.pos - u->pos));
-			check_error("replicate");
-			u->ability_heat += u->ability_cooldown;
-			u->controller->last_replicate = current_frame;
-			karbonite -= 30;
-			++workers;
-			bc_Unit* src = bc_GameController_sense_unit_at_location(gc, t.loc);
-			if (src) {
-				full_update_unit(src);
-				delete_bc_Unit(src);
+			if (best_replicate_tile) {
+				unit* u = best_replicate_unit;
+				tile& t = *best_replicate_tile;
+				bc_GameController_replicate(gc, u->id, bc_Direction_from_relpos(t.pos - u->pos));
+				check_error("replicate");
+				u->ability_heat += u->ability_cooldown;
+				u->controller->last_replicate = current_frame;
+				karbonite -= 30;
+				++workers;
+				bc_Unit* src = bc_GameController_sense_unit_at_location(gc, t.loc);
+				if (src) {
+					full_update_unit(src);
+					delete_bc_Unit(src);
+				}
+				return actions();
 			}
-			return actions();
 		}
 	}
 
@@ -1847,7 +1858,7 @@ void update_distgrids() {
 				}
 				return true;
 			});
-			if (n_builders < 5 || go_for_knights) {
+			if (n_builders < (go_for_knights ? 7 : 5)) {
 				for (size_t index : to_add) {
 					build_positions.push_back(index);
 				}
@@ -1972,6 +1983,7 @@ unit* get_early_harvest_worker() {
 		for (unit* n : my_workers) {
 			if (!n->is_on_map) continue;
 			int s = std::min(default_gather_distgrid[n->index], default_attack_distgrid[n->index]);
+			if (s <= 1) return nullptr;
 			if (n->ability_heat < 10) s -= 10;
 			if (s < best_s) {
 				best_s = s;
@@ -2046,7 +2058,7 @@ void action_update() {
 			int gather_d = default_gather_distgrid[u->index];
 			int build_d = default_build_distgrid[u->index];
 
-			if (build_d <= gather_d && build_d <= 3) {
+			if ((build_d <= gather_d && build_d <= 3) || build_d <= 2) {
 				if (get_early_harvest_worker() != u) {
 					c->distgrid = &default_build_distgrid;
 				}
