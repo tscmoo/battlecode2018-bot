@@ -98,6 +98,8 @@ void run() {
 
 	my_team = (int)bc_GameController_team(gc);
 
+	log("run()\n");
+
 	grid_init();
 	units_init();
 	movement_init();
@@ -115,35 +117,38 @@ void run() {
 
 		current_frame = bc_GameController_round(gc);
 
-		grid_update();
-		units_update();
-		movement_update();
-		action_update();
-		unit_controls_update();
+		if (bc_GameController_get_time_left_ms(gc) > 500) {
+			grid_update();
+			units_update();
+			movement_update();
+			action_update();
+			unit_controls_update();
 
-		if (heal_hits + heal_misses) {
-			log("heal hits: %d misses: %d  %d%%\n", heal_hits, heal_misses, heal_hits * 100 / (heal_hits + heal_misses));
+			if (heal_hits + heal_misses) {
+				log("heal hits: %d misses: %d  %d%%\n", heal_hits, heal_misses, heal_hits * 100 / (heal_hits + heal_misses));
+			}
+
+			if (mages_made) {
+				log("mages: %d damage %d  %.02f per mage\n", mages_made, total_mage_damage, (double)total_mage_damage / mages_made);
+			}
+
+			log("damage dealt: %d taken: %d healed: %d (%.02f%%)\n", total_damage_dealt, total_damage_taken, total_damage_healed, (double)total_damage_healed * 100 / total_damage_taken);
+			log("units killed: %d lost: %d\n", units_killed, units_lost);
+			log("overcharges used: %d\n", overcharges_used);
+
+			double t = std::chrono::duration_cast<std::chrono::duration<double, std::ratio<1, 1000>>>(std::chrono::high_resolution_clock::now() - start).count();
+			log("frame took %gms\n", t);
+
+			if (t > longest_frame) longest_frame = t;
+			frame_time_sum += t;
+			++frames;
+
+			printf("%dms left, longest frame: %gms, average: %gms\n", bc_GameController_get_time_left_ms(gc), longest_frame, frame_time_sum / frames);
+			fflush(stdout);
 		}
 
-		if (mages_made) {
-			log("mages: %d damage %d  %.02f per mage\n", mages_made, total_mage_damage, (double)total_mage_damage / mages_made);
-		}
-
-		log("damage dealt: %d taken: %d healed: %d (%.02f%%)\n", total_damage_dealt, total_damage_taken, total_damage_healed, (double)total_damage_healed * 100 / total_damage_taken);
-		log("units killed: %d lost: %d\n", units_killed, units_lost);
-		log("overcharges used: %d\n", overcharges_used);
-
-		double t = std::chrono::duration_cast<std::chrono::duration<double, std::ratio<1, 1000>>>(std::chrono::high_resolution_clock::now() - start).count();
-		log("frame took %gms\n", t);
-
-		if (t > longest_frame) longest_frame = t;
-		frame_time_sum += t;
-		++frames;
-
-		//printf("%dms left, longest frame: %gms, average: %gms\n", bc_GameController_get_time_left_ms(gc), longest_frame, frame_time_sum / frames);
-		//fflush(stdout);
-
-		//if (current_frame == 538) break;
+		//break;
+		//if (current_frame == 248) break;
 
 		bc_GameController_next_turn(gc);
 	}
@@ -152,6 +157,8 @@ void run() {
 };
 
 int main() {
+
+	printf("r07p02_r12\n");
 
 	auto bot = std::make_unique<botimpl>();
 

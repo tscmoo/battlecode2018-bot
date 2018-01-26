@@ -3,6 +3,23 @@ std::array<int, 0x10000> sqrt_table;
 
 distgrid_t wall_distgrid;
 
+static constexpr int unit_cost = 40;
+static constexpr int worker_cost = 50;
+static constexpr int replicate_cost = 60;
+static constexpr int ranger_min_range = 10;
+static constexpr int ranger_max_range = 50;
+static constexpr int mage_range = 30;
+static constexpr int knight_range = 2;
+static constexpr int healer_range = 30;
+static constexpr int overcharge_range = 30;
+static constexpr int blink_range = 8;
+static constexpr int ranger_damage = 30;
+static constexpr int factory_cost = 200;
+static constexpr int factory_production_time = 15;
+static constexpr int rocket_cost = 150;
+static constexpr int javelin_range = 10;
+static constexpr int rocket_impact_damage = 100;
+
 void action_init() {
 	for (int i = 0; i != 0x10000; ++i) {
 		sqrt_table[i] = isqrt((unsigned)i);
@@ -132,7 +149,7 @@ void unit_attack(unit* u, unit* target, const char* debug_str, bool use_ability 
 	} else if (u->type == knight) {
 		if (use_ability) {
 			bc_GameController_javelin(gc, u->id, target->id);
-			check_error("javelin (knight, %s)");
+			check_error("javelin (knight, %s)", debug_str);
 			u->controller->last_action_frame = current_frame;
 			u->ability_heat += u->ability_cooldown;
 			int damage = std::min(u->damage - target->armor, target->health);
@@ -174,7 +191,7 @@ void overchargeattack() {
 		unit* best_unit = nullptr;
 		int best_score = std::numeric_limits<int>::max();
 		unit* best_target = nullptr;
-		static_vector<xy, 4> best_path;
+		static_vector<xy, 16> best_path;
 		a_vector<unit*> best_healers;
 		bool best_is_ability = false;
 
@@ -182,11 +199,11 @@ void overchargeattack() {
 
 		for (unit* u : my_units) {
 			if (!u->is_on_map) continue;
-			if (u->type != ranger && u->type != mage) continue;
+			if (u->type != ranger && u->type != mage && u->type != knight) continue;
 			healers.clear();
 			for (unit* h : my_units_of_type[healer]) {
 				if (!h->is_on_map) continue;
-				if (h->ability_heat < 10 && lengthsq(u->pos - h->pos) <= 48) {
+				if (h->ability_heat < 10 && lengthsq(u->pos - h->pos) < 300) {
 					h->combat_visit_n = 0;
 					healers.push_back(h);
 				}
@@ -194,28 +211,30 @@ void overchargeattack() {
 			if (healers.size() < 2) continue;
 
 			unit* target = get_best_score_copy(visible_enemy_units, [&](unit* e) {
+				if (e->type == worker) return std::numeric_limits<int>::max();
 				return lengthsq(u->pos - e->pos) * 110 + e->health;
-			});
+			}, std::numeric_limits<int>::max());
 			if (!target) continue;
 			int target_d = lengthsq(u->pos - target->pos);
-			if (target_d > 98) continue;
+			if (target_d > 300) continue;
 
 			int moves = 0;
 			bool has_javelin = u->type == knight && knight_research_level >= 3;
 			int attack_heat = has_javelin ? u->ability_heat : u->attack_heat;
 			int movement_heat = u->movement_heat;
 			xy pos = u->pos;
-			static_vector<xy, 4> path;
+			static_vector<xy, 16> path;
 			int max_moves = 2;
 			if (u->type == mage) max_moves = 4;
-			if (u->type == knight) max_moves = has_javelin ? 4 : 6;
-			int attack_range = has_javelin ? 10 : u->attack_range;
+			if (u->type == knight) max_moves = has_javelin ? 4 : 8;
+			int attack_range = has_javelin ? javelin_range : u->attack_range;
+			int attack_min_range = has_javelin ? 0 : u->min_range;
 			for (int i = 0; i != max_moves; ++i) {
 				if (target_d <= attack_range) break;
 				if (movement_heat >= 10) {
 					bool any_in_range = false;
 					for (unit* h : healers) {
-						if (h->combat_visit_n == 0 && lengthsq(h->pos - pos) <= 30) {
+						if (h->combat_visit_n == 0 && lengthsq(h->pos - pos) <= overcharge_range) {
 							any_in_range = true;
 							h->combat_visit_n = 1;
 							break;
@@ -242,7 +261,7 @@ void overchargeattack() {
 				path.push_back(pos);
 			}
 			if (target_d > attack_range) continue;
-			if (u->type == ranger && target_d <= 10) continue;
+			if (target_d <= attack_min_range) continue;
 			int healers_in_range = 0;
 			for (unit* h : healers) {
 				if (h->combat_visit_n == 0 && lengthsq(h->pos - pos) <= 30) {
@@ -250,9 +269,10 @@ void overchargeattack() {
 				}
 			}
 			int n_attacks = (attack_heat < 10 ? 1 : 0) + healers_in_range - moves;
-			log("n_attacks is %d\n", n_attacks);
+			log("u->type is %d at %d %d, n_attacks is %d\n", u->type, u->pos.x, u->pos.y, n_attacks);
 			log("healers.size() is %d, healers_in_range %d\n", healers.size(), healers_in_range);
 			int damage = u->damage - target->armor;
+			log("damage %d, target->health %d\n", damage, target->health);
 			if (target->health > n_attacks * damage) continue;
 			n_attacks = (target->health + damage - 1) / damage;
 			log("moves %d, n_attacks %d\n", moves, n_attacks);
@@ -262,7 +282,7 @@ void overchargeattack() {
 				int kills = 0;
 				auto f = [&](tile& t) {
 					if (t.u) {
-						if (u->damage - t.u->armor >= t.u->health) {
+						if ((u->damage - t.u->armor) * n_attacks >= t.u->health) {
 							++kills;
 						}
 					}
@@ -277,8 +297,10 @@ void overchargeattack() {
 				if (moves > kills) continue;
 			}
 
+			log("score %d\n", s);
+
 			if (s < best_score) {
-				log("score %d\n", s);
+				log("new best score!\n");
 				best_score = s;
 				best_unit = u;
 				best_target = target;
@@ -295,7 +317,7 @@ void overchargeattack() {
 				unit* target = best_unit;
 				unit* u = nullptr;
 				for (unit* h : best_healers) {
-					if (h->ability_heat < 10 && lengthsq(h->pos - target->pos) <= 30) {
+					if (h->ability_heat < 10 && lengthsq(h->pos - target->pos) <= overcharge_range) {
 						u = h;
 						break;
 					}
@@ -332,7 +354,7 @@ void overchargeattack() {
 			}
 			while (!failed && target->health > 0) {
 				log("attack! target health is %d\n", target->health);
-				if (u->attack_heat >= 10) {
+				if ((best_is_ability ? u->ability_heat : u->attack_heat) >= 10) {
 					if (!overcharge()) break;
 				}
 				unit_attack(u, target, "overcharge", best_is_ability);
@@ -401,7 +423,7 @@ void attackstuff() {
 				if (a->type != ranger) return;
 				if (a->attack_heat >= 10) return;
 				int r = lengthsq(a->pos - e->pos);
-				if (r <= a->attack_range && r > 10) {
+				if (r <= a->attack_range && r > a->min_range) {
 					int d = damage_grid[a->index];
 					if (d < a->health) {
 						allies_in_range.push_back(std::make_tuple(d, a, a->index));
@@ -412,8 +434,8 @@ void attackstuff() {
 					size_t index = distgrid_index(t.pos);
 					if (t.walkable && t.visible) {
 						int r = lengthsq(t.pos - e->pos);
-						if (r <= a->attack_range && r > 10) {
-							int d = damage_grid[index];
+						if (r <= a->attack_range && r > a->min_range) {
+						int d = damage_grid[index];
 							if (d < a->health) {
 								allies_in_range.push_back(std::make_tuple(d, a, index));
 							}
@@ -555,10 +577,10 @@ bool replicate_to_the_far_reaches_of_the_world(bool is_mars_spam) {
 				return true;
 			});
 			size_t index = distgrid_index(t.pos);
-			movecost[index] = 31 - std::min(t.karbonite / 3, 30);
+			movecost[index] = replicate_cost + 1 - std::min(t.karbonite / 3, replicate_cost);
 			if (karbonite) {
 				if (get_replicate_score(t.pos, is_mars_spam) != std::numeric_limits<int>::max()) {
-					int s = any_unit_distgrid[index] * 30;
+					int s = any_unit_distgrid[index] * replicate_cost;
 					if (s < inf_distance) {
 						open.push({index, -s, 0});
 					}
@@ -601,12 +623,12 @@ bool replicate_to_the_far_reaches_of_the_world(bool is_mars_spam) {
 							u->movement_heat += u->movement_cooldown;
 							return true;
 						}
-						if (u->ability_heat < 10 && karbonite >= 30) {
+						if (u->ability_heat < 10 && karbonite >= replicate_cost) {
 							bc_GameController_replicate(gc, u->id, bc_Direction_from_relpos(t.pos - u->pos));
 							check_error("replicate (world)");
 							u->ability_heat += u->ability_cooldown;
 							u->controller->last_replicate = current_frame;
-							karbonite -= 30;
+							karbonite -= replicate_cost;
 							++workers;
 							bc_Unit* src = bc_GameController_sense_unit_at_location(gc, t.loc);
 							if (src) {
@@ -672,7 +694,7 @@ int get_replicate_score(xy src_pos, bool is_mars_spam) {
 			}
 		}
 	}
-	return (is_mars_spam ? s : k >= w * 45 ? s : std::numeric_limits<int>::max());
+	return (is_mars_spam ? s : k >= w * (worker_cost * 15 / 10) ? s : std::numeric_limits<int>::max());
 }
 
 bool go_for_knights = false;
@@ -722,14 +744,14 @@ void actions() {
 		}
 	}
 
-	overchargeattack();
+	//overchargeattack();
 	attackstuff();
 
 	int total_karbonite = 0;
 	for (auto& t : current_planet->tiles) {
 		total_karbonite += std::min(t.karbonite, 120);
 	}
-	
+
 	bool save_for_rocket = false;
 	if (rocket_research_level && rockets < (rangers + healers + mages + 7) / 8 && current_planet == earth) {
 		int visible_tiles = 0;
@@ -737,7 +759,7 @@ void actions() {
 			if (t.visible) ++visible_tiles;
 		}
 		int map_control = visible_tiles * 100 / (int)current_planet->tiles.size();
-		if (map_control > 66 || map_control < 20 || current_frame >= 550 || rangers + healers + mages + knights >= 100) {
+		if (map_control > 66 || map_control < 20 || current_frame >= 550 || rangers + healers + mages + knights >= 2000 / unit_cost) {
 			int best_rocket_score = std::numeric_limits<int>::min();
 			tile* best_rocket_tile = nullptr;
 			unit* best_rocket_unit = nullptr;
@@ -777,7 +799,7 @@ void actions() {
 				unit* u = best_rocket_unit;
 				tile& t = *best_rocket_tile;
 				if (t.u) {
-					if (karbonite >= 100) {
+					if (karbonite >= rocket_cost * 4 / 3) {
 						bc_GameController_disintegrate_unit(gc, t.u->id);
 						check_error("disintegrate");
 						unit* u = t.u;
@@ -787,12 +809,12 @@ void actions() {
 						return actions();
 					} else save_for_rocket = true;
 				}
-				if (workers < (rangers + healers + mages >= 30 ? 8 : 4) && karbonite >= 30 && u->ability_heat < 10) {
+				if (workers < (rangers + healers + mages >= 30 ? 8 : 4) && karbonite >= replicate_cost && u->ability_heat < 10) {
 					bc_GameController_replicate(gc, u->id, bc_Direction_from_relpos(t.pos - u->pos));
 					check_error("replicate (rocket)");
 					u->ability_heat += u->ability_cooldown;
 					u->controller->last_replicate = current_frame;
-					karbonite -= 30;
+					karbonite -= replicate_cost;
 					++workers;
 					bc_Unit* src = bc_GameController_sense_unit_at_location(gc, t.loc);
 					if (src) {
@@ -801,14 +823,14 @@ void actions() {
 					}
 					return actions();
 				} else {
-					if (karbonite < 75) save_for_rocket = true;
+					if (karbonite < rocket_cost) save_for_rocket = true;
 					else {
 						if (!t.u) {
 							bc_GameController_blueprint(gc, u->id, Rocket, bc_Direction_from_relpos(t.pos - u->pos));
 							check_error("blueprint rocket");
 							u->controller->last_action_frame = current_frame;
 							u->controller->nomove_frame = current_frame;
-							karbonite -= 75;
+							karbonite -= rocket_cost;
 							++rockets;
 							bc_Unit* src = bc_GameController_sense_unit_at_location(gc, t.loc);
 							if (src) {
@@ -831,18 +853,19 @@ void actions() {
 		if (!u->is_on_map) continue;
 		if (u->controller->last_action_frame == current_frame) continue;
 		int n = 3 + (karbonite - 500) / 400;
+		int max_lost = factory_cost + factory_cost / 4;
 		auto lost_karbonite = [&]() {
 			int k = karbonite;
 			int r = 0;
-			while (k > 120) {
+			while (k > max_lost) {
 				r += std::min(k / 40, 10);
-				int d = std::max(10 - (k / 40), 0) - 20 * usable_factories / 5;
+				int d = std::max(10 - (k / 40), 0) - unit_cost * usable_factories / factory_production_time;
 				if (d > 0) return std::numeric_limits<int>::max();
 				k += d;
 			}
 			return r;
 		};
-		if ((usable_factories < n || lost_karbonite() >= 120) && current_planet == earth && karbonite >= 100) {
+		if ((usable_factories < n || lost_karbonite() >= max_lost) && current_planet == earth && karbonite >= factory_cost) {
 			u->p->for_each_neighbor_tile(u->pos, [&](tile& t) {
 				if (t.pos == u->pos) return true;
 				if (!t.walkable || t.u) return true;
@@ -879,8 +902,8 @@ void actions() {
 		}
 	}
 
-	bool want_factories = ((go_for_knights ? workers >= 8 || current_frame >= 6 : workers >= 20 || current_frame >= 20) || (current_frame >= 3 && karbonite > 100));
-	bool save_for_factory = factories == 0 && want_factories && current_planet == earth && karbonite < 250;
+	bool want_factories = ((go_for_knights ? workers >= 240 / replicate_cost || current_frame >= 6 : workers >= 600 / replicate_cost || current_frame >= 20) || (current_frame >= 3 && karbonite > factory_cost));
+	bool save_for_factory = factories == 0 && want_factories && current_planet == earth && karbonite < factory_cost * 5 / 2;
 
 	if (best_factory_tile && want_factories) {
 		unit* u = best_factory_unit;
@@ -889,7 +912,7 @@ void actions() {
 		check_error("blueprint factory");
 		u->controller->last_action_frame = current_frame;
 		u->controller->nomove_frame = current_frame;
-		karbonite -= 100;
+		karbonite -= factory_cost;
 		++factories;
 		++usable_factories;
 		bc_Unit* src = bc_GameController_sense_unit_at_location(gc, t.loc);
@@ -969,7 +992,7 @@ void actions() {
 						});
 					}
 				}
-				if (need_more_builders && u->ability_heat < 10 && factories && karbonite >= 30) {
+				if (need_more_builders && u->ability_heat < 10 && factories && karbonite >= replicate_cost) {
 					tile* best_tile = nullptr;
 					int best_score = 0;
 					u->p->for_each_neighbor_tile(u->pos, [&](tile& t) {
@@ -989,7 +1012,7 @@ void actions() {
 						check_error("replicate (build)");
 						u->ability_heat += u->ability_cooldown;
 						u->controller->last_replicate = current_frame;
-						karbonite -= 30;
+						karbonite -= replicate_cost;
 						++workers;
 						bc_Unit* src = bc_GameController_sense_unit_at_location(gc, t.loc);
 						if (src) {
@@ -1101,10 +1124,11 @@ void actions() {
 	}
 
 
-	bool mars_spam = current_planet == mars && (current_frame >= 700 || karbonite > 100);
+	bool mars_spam = current_planet == mars && (current_frame >= 700 || karbonite > factory_cost);;
 
 	if ((current_planet == earth || current_frame < 680 || mars_spam) && !save_for_factory) {
-		if (factories >= 3 || workers < 15 || mars_spam) {
+		int factory_saturation = (10 * factory_production_time + factory_production_time - 1) / unit_cost;
+		if (factories >= factory_saturation || workers < 450 / replicate_cost || mars_spam) {
 			if (replicate_to_the_far_reaches_of_the_world(mars_spam)) return actions();
 
 			int best_replicate_score = std::numeric_limits<int>::max();
@@ -1114,8 +1138,8 @@ void actions() {
 				if (!u->is_on_map) continue;
 				//if (u->controller->last_action_frame == current_frame) continue;
 
-				//if (total_karbonite >= workers * 42 && karbonite >= 30 && u->ability_heat < 10 && factories) {
-				if (karbonite >= 30 && u->ability_heat < 10 && (factories >= 3 || workers < 30 || mars_spam)) {
+				//if (total_karbonite >= workers * 42 && karbonite >= replicate_cost && u->ability_heat < 10 && factories) {
+				if (karbonite >= replicate_cost && u->ability_heat < 10 && (factories >= factory_saturation || workers < 900 / replicate_cost || mars_spam)) {
 					int ud = default_gather_distgrid[u->index];
 					u->p->for_each_neighbor_tile(u->pos, [&](tile& t) {
 						if (t.pos == u->pos) return true;
@@ -1142,7 +1166,7 @@ void actions() {
 				check_error("replicate");
 				u->ability_heat += u->ability_cooldown;
 				u->controller->last_replicate = current_frame;
-				karbonite -= 30;
+				karbonite -= replicate_cost;
 				++workers;
 				bc_Unit* src = bc_GameController_sense_unit_at_location(gc, t.loc);
 				if (src) {
@@ -1220,7 +1244,7 @@ void actions() {
 						u->p->for_each_neighbor_tile(u->pos, [&](tile& t) {
 							if (t.u) {
 								unit* target = t.u;
-								int damage = 100;
+								int damage = rocket_impact_damage;
 								target->health -= damage;
 								if (target->health <= 0) {
 									target->health = 0;
@@ -1255,19 +1279,33 @@ void actions() {
 		if (u->controller->last_action_frame == current_frame) continue;
 
 		if (workers < (rocket_research_level ? 4 : 1)) {
-			if (karbonite >= 25 && !u->factory_busy && u->loaded_units.size() < u->max_capacity) {
+			if (karbonite >= worker_cost && !u->factory_busy && u->loaded_units.size() < u->max_capacity) {
 				bc_GameController_produce_robot(gc, u->id, Worker);
-				check_error("produce");
+				check_error("produce worker");
 				u->controller->last_action_frame = current_frame;
-				karbonite -= 25;
+				karbonite -= worker_cost;
 				++workers;
 				continue;
 			}
 			continue;
 		}
 
-		if (workers && !save_for_rocket && karbonite >= 20 && !u->factory_busy && u->loaded_units.size() < u->max_capacity) {
-			if (go_for_knights && knights_made < 16) {
+		if (workers && !save_for_rocket && karbonite >= unit_cost && !u->factory_busy && u->loaded_units.size() < u->max_capacity) {
+			if (overcharge_done_frame - current_frame <= 10 && false) {
+				if (rangers < healers) {
+					++rangers_made;
+					++rangers;
+					bc_GameController_produce_robot(gc, u->id, Ranger);
+				} else if (knights < healers / 2) {
+					++knights;
+					++knights_made;
+					bc_GameController_produce_robot(gc, u->id, Knight);
+				} else {
+					++healers_made;
+					++healers;
+					bc_GameController_produce_robot(gc, u->id, Healer);
+				}
+			} else if (go_for_knights && knights_made < 16) {
 				if (mages_made < knights_made - 4) {
 					++mages_made;
 					++mages;
@@ -1296,11 +1334,12 @@ void actions() {
 					++healers;
 					bc_GameController_produce_robot(gc, u->id, Healer);
 				}
-			} else if (knights_made < 1 || knights < (knight_research_level >= 2 ? rangers : 0)) {
+			//} else if (knights_made < 1 || knights < (overcharge_done_frame - current_frame <= 60 && rangers >= 16 ? (rangers + mages) * 4 / 3 : knight_research_level >= 2 ? rangers : 0)) {
+			} else if (knights_made < 2 || knights < (knight_research_level >= 2 ? rangers : rangers / 2)) {
 				++knights;
 				++knights_made;
 				bc_GameController_produce_robot(gc, u->id, Knight);
-			} else if (mages_made < enemy_knights || mages < (overcharge_done_frame - current_frame <= 60 && healers >= 16 ? std::min(rangers * 1 / 3, 8) : 0) + (current_frame >= blink_done_frame ? rangers / 3 + std::min(30, rangers) : current_frame + 40 >= blink_done_frame ? rangers / 5 : 0)) {
+			} else if (mages_made < 1 + enemy_knights || mages < (overcharge_done_frame - current_frame <= 60 && healers >= 16 ? std::min(rangers * 1 / 3, 8) : 0) + (current_frame >= blink_done_frame ? rangers / 3 + std::min(30, rangers) : current_frame + 40 >= blink_done_frame ? rangers / 5 : 0)) {
 				++mages_made;
 				++mages;
 				bc_GameController_produce_robot(gc, u->id, Mage);
@@ -1315,7 +1354,7 @@ void actions() {
 			}
 			check_error("produce");
 			u->controller->last_action_frame = current_frame;
-			karbonite -= 20;
+			karbonite -= unit_cost;
 			continue;
 		}
 
@@ -1351,7 +1390,7 @@ void actions() {
 			unit* target = get_best_score_copy(enemy_targets, [&](unit* e) {
 				if (e->health == 0) return std::numeric_limits<int>::max();
 				int d = lengthsq(e->pos - u->pos);
-				if (d > 10) return std::numeric_limits<int>::max();
+				if (d > javelin_range) return std::numeric_limits<int>::max();
 				int damage = u->damage - e->armor;
 				int hp = e->health - damage;
 				int r = std::max(hp, 0);
@@ -1385,8 +1424,8 @@ void actions() {
 			unit* target = get_best_score_copy(enemy_targets, [&](unit* e) {
 				if (e->health == 0) return std::numeric_limits<int>::max();
 				int d = lengthsq(e->pos - u->pos);
-				if (d <= 10) return std::numeric_limits<int>::max();
-				if (d > 50) return std::numeric_limits<int>::max();
+				if (d <= ranger_min_range) return std::numeric_limits<int>::max();
+				if (d > ranger_max_range) return std::numeric_limits<int>::max();
 				int damage = u->damage - e->armor;
 				int hp = e->health - damage;
 				int r = std::max(hp, 0);
@@ -1420,14 +1459,14 @@ void actions() {
 					return 1000000 + default_attack_distgrid[e->index];
 				}
 				int l = lengthsq(e->pos - u->pos);
-				int d = std::max(l - 30, 0);
-				int r = (std::max(e->health, e->max_health) / 30 * 30 / (u->type + 1) + d * 10) * 100 - std::min(l, 30);
+				int d = std::max(l - healer_range, 0);
+				int r = (std::max(e->health, e->max_health) / ranger_damage * ranger_damage / (u->type + 1) + d * 10) * 100 - std::min(l, healer_range);
 				if (damage_grid[e->index] == 0) r += 100;
 				return r;
 			}, std::numeric_limits<int>::max());
 
 			u->controller->heal_target = target;
-			if (target && target->health < target->max_health && lengthsq(u->pos - target->pos) <= 30) {
+			if (target && target->health < target->max_health && lengthsq(u->pos - target->pos) <= healer_range) {
 				bc_GameController_heal(gc, u->id, target->id);
 				check_error("heal");
 				u->controller->last_action_frame = current_frame;
@@ -1441,7 +1480,7 @@ void actions() {
 			unit* target = get_best_score_copy(enemy_targets, [&](unit* e) {
 				if (e->health == 0) return std::numeric_limits<int>::max();
 				int d = lengthsq(e->pos - u->pos);
-				if (d > 2) return std::numeric_limits<int>::max();
+				if (d > knight_range) return std::numeric_limits<int>::max();
 				int damage = u->damage - e->armor;
 				int hp = e->health - damage;
 				int r = std::max(hp, 0);
@@ -1480,7 +1519,7 @@ void actions() {
 					for (unit* e : enemy_targets) {
 						if (e->gone || e->health == 0) continue;
 						int d = lengthsq(e->pos - pos);
-						if (d > 30) continue;
+						if (d > mage_range) continue;
 						int kills = 0;
 						int damage = std::min(e->health - u->damage + e->armor, e->health);
 						if (damage >= e->health) ++kills;
@@ -1523,12 +1562,12 @@ void actions() {
 				if (mage_research_level >= 4 && u->ability_heat < 10) {
 					size_t width = u->p->width;
 					size_t height = u->p->height;
-					int range = sqrt_table[8];
+					int range = sqrt_table[blink_range];
 					for (int y = -range; y <= range; ++y) {
 						for (int x = -range; x <= range; ++x) {
 							xy pos = src_pos + xy(x, y);
 							if ((size_t)pos.x >= width || (size_t)pos.y >= height) continue;
-							if (lengthsq(xy(x, y)) > 8) continue;
+							if (lengthsq(xy(x, y)) > blink_range) continue;
 							auto& t = u->p->get_tile(pos);
 							if (!t.walkable || t.u) continue;
 							find_target(pos, true);
@@ -1575,6 +1614,7 @@ void actions() {
 
 	}
 
+	overchargeattack();
 }
 
 
@@ -1593,7 +1633,7 @@ bool overcharge() {
 			if (target->type != ranger) continue;
 
 			int d = lengthsq(target->pos - u->pos);
-			if (d > 30) continue;
+			if (d > healer_range) continue;
 			if (target->attack_heat != target->attack_cooldown) continue;
 
 			int s = -d + damage_grid[target->index] + default_attack_distgrid[target->index];
@@ -1643,6 +1683,9 @@ void combat_distgrids() {
 	size_t width = current_planet->width;
 	size_t height = current_planet->height;
 
+	std::array<uint16_t, 2500> visited{};
+	uint16_t next_visited_n = 1;
+
 	for (unit* e : enemy_units) {
 		if (e->gone) continue;
 
@@ -1653,10 +1696,10 @@ void combat_distgrids() {
 					xy pos = e->pos + xy(x, y);
 					if ((size_t)pos.x >= width || (size_t)pos.y >= height) continue;
 					xy npos(x, y);
-					if (x > 0) --npos.x;
-					else if (x < 0) ++npos.x;
-					if (y > 0) --npos.y;
-					else if (y < 0) ++npos.y;
+//					if (x > 0) --npos.x;
+//					else if (x < 0) ++npos.x;
+//					if (y > 0) --npos.y;
+//					else if (y < 0) ++npos.y;
 					if (lengthsq(npos) > sqrange) continue;
 					size_t index = distgrid_index(pos);
 					grid[index] = true;
@@ -1664,29 +1707,36 @@ void combat_distgrids() {
 			}
 		};
 
-		auto add_damage = [&](int sqrange, int damage, auto& grid) {
+		uint16_t visited_n = next_visited_n++;
+
+		auto add_damage = [&](xy src_pos, int sqrange, int damage, auto& grid) {
 			int range = sqrt_table[sqrange] + 1;
 			for (int y = -range; y <= range; ++y) {
 				for (int x = -range; x <= range; ++x) {
-					xy pos = e->pos + xy(x, y);
+					xy pos = src_pos + xy(x, y);
 					if ((size_t)pos.x >= width || (size_t)pos.y >= height) continue;
-					xy npos(x, y);
-					if (x > 0) --npos.x;
-					else if (x < 0) ++npos.x;
-					if (y > 0) --npos.y;
-					else if (y < 0) ++npos.y;
-					if (lengthsq(npos) > sqrange) continue;
+					if (lengthsq(xy(x, y)) > sqrange) continue;
 					size_t index = distgrid_index(pos);
+					auto& v = visited[index];
+					if (v == visited_n) continue;
+					v = visited_n;
 					grid[index] += damage;
 				}
 			}
 		};
 
-		set_inside_range(10, ranger_too_close);
+		set_inside_range(ranger_min_range, ranger_too_close);
 
 		if (e->damage) {
-			//set_inside_range(e->attack_range, ranger_too_close);
-			add_damage(e->attack_range, e->damage, damage_grid);
+//			//set_inside_range(e->attack_range, ranger_too_close);
+//			add_damage(e->attack_range, e->damage, damage_grid);
+			add_damage(e->pos, e->attack_range, e->damage, damage_grid);
+			e->p->for_each_neighbor_tile(e->pos, [&](tile& t) {
+				if (t.walkable && (!t.u || !t.u->is_building)) {
+					add_damage(t.pos, e->attack_range, e->damage, damage_grid);
+				}
+				return true;
+			});
 		}
 
 	}
@@ -1711,9 +1761,9 @@ void combat_distgrids() {
 			}
 		};
 
-		add(50, ranger_too_close, ranger_attack_locations);
+		add(ranger_max_range, ranger_too_close, ranger_attack_locations);
 
-		add(30, ranger_too_close, mage_attack_locations);
+		add(mage_range, ranger_too_close, mage_attack_locations);
 
 	}
 
@@ -1937,10 +1987,15 @@ void research() {
 
 		if (!any_reachable_enemies() || enemy_rockets) research(Rocket, 1);
 		if (go_for_knights) research(Knight, 1);
+		research(Knight, 1);
+		research(Healer, 2);
+		//research(Knight, 1);
 		research(Healer, 3);
 		//research(Ranger, 1);
 		research(Rocket, 1);
+		research(Mage, 1);
 		research(Knight, 3);
+		research(Mage, 2);
 		research(Ranger, 2);
 		//research(Knight, 3);
 		research(Mage, 4);

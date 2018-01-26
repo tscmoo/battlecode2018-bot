@@ -56,6 +56,7 @@ struct unit {
 
 	int armor = 0;
 	int combat_visit_n = 0;
+	int min_range = 0;
 
 	unit_controller* controller = nullptr;
 
@@ -112,7 +113,6 @@ bool unit_is_in_group(unit* u, a_vector<unit*>& group) {
 }
 
 void update_groups(unit* u) {
-	log("update_groups()\n");
 	update_group(u, my_units, !u->dead && u->p == current_planet && u->is_mine);
 	update_group(u, my_buildings, !u->dead && u->p == current_planet && u->is_mine && u->is_building);
 	update_group(u, my_workers, !u->dead && u->p == current_planet && u->is_mine && u->type == worker);
@@ -124,7 +124,6 @@ void update_groups(unit* u) {
 	update_group(u, enemy_units, !u->dead && u->p == current_planet && u->is_enemy);
 	update_group(u, enemy_buildings, !u->dead && u->p == current_planet && u->is_enemy && u->is_building);
 	update_group(u, visible_enemy_units, !u->dead && u->visible && u->p == current_planet && u->is_enemy);
-	log("~update_groups()\n");
 }
 
 void update_unit(unit* u, bc_Unit* src) {
@@ -208,6 +207,7 @@ void update_unit(unit* u, bc_Unit* src) {
 
 	u->factory_busy = u->type == factory && bc_Unit_is_factory_producing(src);
 	u->armor = u->type == knight ? bc_Unit_knight_defense(src) : 0;
+	u->min_range = u->type == ranger ? bc_Unit_ranger_cannot_attack_range(src) : 0;
 
 }
 

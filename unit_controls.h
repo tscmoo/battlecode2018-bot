@@ -131,7 +131,7 @@ void move_units(bool check_damage = true) {
 		unit_controller* best_nc = nullptr;
 		if (move[start_index] != c) error("move[start_index] != c");
 		move[start_index] = nullptr;
-		const size_t order[] = { 1,7,3,5,0,8,2,6,4 };
+		const size_t order[] = {1, 7, 3, 5, 0, 8, 2, 6, 4};
 		xy upos = u->pos;
 		//log("movement heat for %d %d is %d\n", c->u->pos.x, c->u->pos.y, c->u->movement_heat);
 		if (c->u->movement_heat < 10 && !c->u->is_building) {
@@ -219,6 +219,9 @@ void move_units(bool check_damage = true) {
 						break;
 					}
 				}
+				if (!in_range && c->u->type == knight) {
+					in_range = default_attack_distgrid[c->u->index] <= 3;
+				}
 				if (in_range) {
 					damage_out += damage;
 					if (healer_research_level >= 3 && false) {
@@ -242,13 +245,16 @@ void move_units(bool check_damage = true) {
 				bool in_range = false;
 				for (size_t i = 0; i < vec_size; ++i) {
 					xy pos = positions[i];
-					for_each_neighbor_pos_index(e->pos, [&](xy npos, size_t index) {
-						if (lengthsq(npos - pos) <= range) {
-							in_range = true;
-							return false;
-						}
-						return true;
-					});
+					in_range = lengthsq(e->pos - pos) <= range;
+					if (!in_range) {
+						e->p->for_each_neighbor_tile(e->pos, [&](tile& t) {
+							if (t.walkable && (!t.u || t.u->is_building) && lengthsq(t.pos - pos) <= range) {
+								in_range = true;
+								return false;
+							}
+							return true;
+						});
+					}
 					if (in_range) break;
 				}
 				if (in_range) {
@@ -275,7 +281,20 @@ void move_units(bool check_damage = true) {
 
 			for (size_t i = 0; i != vec_size; ++i) {
 				unit_controller* c = vec[i];
-				if (c->u->type == knight || c->u->type == worker) continue;
+				if (c->u->type == worker) continue;
+				if (c->u->type == knight) {
+					if (default_attack_distgrid[c->u->index] <= 3) continue;
+					int n_nearby = 0;
+					for (size_t i2 = 0; i2 != vec_size; ++i2) {
+						if (i == i2) continue;
+						unit_controller* c2 = vec[i2];
+						if (c2->u->type == knight && lengthsq(c2->u->pos - c->u->pos) <= 8) {
+							++n_nearby;
+							if (n_nearby >= 3) break;
+						}
+					}
+					if (n_nearby >= 3) continue;
+				}
 				for (size_t i = 0; i < 9; ++i) {
 					auto& s = c->move_scores[i];
 					if (s == inf_distance) continue;
@@ -283,8 +302,8 @@ void move_units(bool check_damage = true) {
 					if ((size_t)pos.x >= width || (size_t)pos.y >= height) continue;
 					size_t index = distgrid_index(pos);
 					s += damage_grid[index];
-					if (damage_grid[c->u->index] >= 60) {
-						s -= default_attack_distgrid[index];
+					if (damage_grid[c->u->index]) {
+						s += default_attack_distgrid[index] * 10;
 					}
 				}
 			}
