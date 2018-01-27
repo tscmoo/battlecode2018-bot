@@ -279,9 +279,19 @@ void move_units(bool check_damage = true) {
 
 		if (damage_out < damage_in * mult / 256) {
 
+			int nearest_knight = std::numeric_limits<int>::max();
 			for (size_t i = 0; i != vec_size; ++i) {
 				unit_controller* c = vec[i];
 				if (c->u->type == worker) continue;
+				if (c->u->type == knight) {
+					int d = default_attack_distgrid[c->u->index];
+					if (d < nearest_knight) nearest_knight = d;
+				}
+			}
+
+			for (size_t i = 0; i != vec_size; ++i) {
+				unit_controller* c = vec[i];
+				if (c->u->type == worker && (current_frame < 80 || workers > 10)) continue;
 				if (c->u->type == knight) {
 					if (default_attack_distgrid[c->u->index] <= 3) continue;
 					int n_nearby = 0;
@@ -294,6 +304,10 @@ void move_units(bool check_damage = true) {
 						}
 					}
 					if (n_nearby >= 3) continue;
+					unit* target = get_best_score_copy(enemy_units, [&](unit* e) {
+						return lengthsq(e->pos - c->u->pos);
+					});
+					if (!target || damage_grid[target->index] < c->u->health / 3) continue;
 				}
 				for (size_t i = 0; i < 9; ++i) {
 					auto& s = c->move_scores[i];
@@ -301,9 +315,10 @@ void move_units(bool check_damage = true) {
 					xy pos = c->u->pos + relpos[i];
 					if ((size_t)pos.x >= width || (size_t)pos.y >= height) continue;
 					size_t index = distgrid_index(pos);
+					if (nearest_knight < default_attack_distgrid[index]) continue;
 					s += damage_grid[index];
 					if (damage_grid[c->u->index]) {
-						s += default_attack_distgrid[index] * 10;
+						s -= default_attack_distgrid[index] * 10;
 					}
 				}
 			}

@@ -158,7 +158,7 @@ void run() {
 
 int main() {
 
-	printf("r07p02_r12\n");
+	printf("r07p02_r13\n");
 
 	auto bot = std::make_unique<botimpl>();
 
